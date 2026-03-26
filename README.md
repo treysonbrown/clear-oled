@@ -110,7 +110,62 @@ Optional GPIO overrides are only used if the selected backend supports them:
 python3 hello_oled_1in51.py --text hello --dc-pin 25 --rst-pin 27
 ```
 
-## 4. Acceptance checks
+## 4. Manual translation test without the camera
+
+If the OLED is working and you want to test Japanese -> English translation before the camera arrives, install a local translation backend on the Raspberry Pi.
+
+Install the Python packages:
+
+```bash
+python3 -m pip install pillow argostranslate
+```
+
+Then install a Japanese -> English Argos translation package. One way is:
+
+```bash
+python3 - <<'PY'
+import argostranslate.package
+import argostranslate.translate
+
+available = argostranslate.package.get_available_packages()
+package = next(
+    pkg for pkg in available
+    if pkg.from_code == "ja" and pkg.to_code == "en"
+)
+path = package.download()
+argostranslate.package.install_from_path(path)
+PY
+```
+
+Now you can type Japanese into the terminal and have the OLED show the English translation:
+
+```bash
+python3 translate_input_oled.py
+```
+
+Or translate a single phrase and exit:
+
+```bash
+python3 translate_input_oled.py --text "猫"
+```
+
+## 5. Camera translation runtime
+
+Once the camera module is installed, use the continuous pipeline:
+
+```bash
+python3 translate_camera_oled.py --debug
+```
+
+This runtime captures frames from `rpicam-still` or `libcamera-still`, runs Japanese OCR with Tesseract, translates stable results locally, and pushes the latest English translation to the OLED.
+
+You will need local OCR installed on the Pi for this path:
+
+```bash
+sudo apt-get install -y tesseract-ocr tesseract-ocr-jpn
+```
+
+## 6. Acceptance checks
 
 After the C demo works, the Python path is considered correct when:
 
@@ -118,3 +173,4 @@ After the C demo works, the Python path is considered correct when:
 - clearing the display produces a blank panel
 - `--rotate` and `--no-rotate` behave predictably
 - restarting the script several times does not change the output quality
+- manual Japanese input produces English output on the OLED
