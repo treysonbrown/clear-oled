@@ -211,6 +211,57 @@ This runtime captures frames on the Pi, center-crops them, sends them to the Mac
 
 If the MacBook is offline or unreachable, the Pi will show `SERVER DOWN` on the OLED and keep retrying.
 
+### 5.6 Temporary MacBook webcam workaround
+
+Use this temporary path when the Pi camera module is broken but you still want the same final behavior on the Pi OLED.
+
+On the Raspberry Pi, keep the OLED hardware setup from section 2, then install the lightweight dependencies and start the display receiver:
+
+```bash
+cd /path/to/clear-oled
+python3 -m pip install -r requirements-pi.txt
+python3 display_server_ws.py --token change-me --debug
+```
+
+The Pi will show `SERVER DOWN` until the MacBook sender connects.
+
+On the MacBook, install the webcam sender dependencies:
+
+```bash
+cd /path/to/clear-oled
+python3 -m pip install -r requirements-mac-camera.txt
+```
+
+The MacBook also needs Tesseract with Japanese language data installed through the local OS package manager, plus a Japanese -> English Argos package:
+
+```bash
+python3 - <<'PY'
+import argostranslate.package
+import argostranslate.translate
+
+available = argostranslate.package.get_available_packages()
+package = next(
+    pkg for pkg in available
+    if pkg.from_code == "ja" and pkg.to_code == "en"
+)
+path = package.download()
+argostranslate.package.install_from_path(path)
+PY
+```
+
+Then run the MacBook webcam sender:
+
+```bash
+python3 translate_macbook_camera_oled.py \
+  --display-url ws://YOUR-PI-HOSTNAME.local:8766 \
+  --token change-me \
+  --debug
+```
+
+This runtime captures frames from the MacBook webcam, center-crops them, runs OCR and translation locally on the MacBook, and pushes only the final English text to the Pi OLED.
+
+If the MacBook sender stops or disconnects, the Pi OLED returns to `SERVER DOWN`.
+
 ## 6. Local Pi-only mode
 
 If you want everything to run directly on the Pi, install the heavier dependencies there instead.
@@ -270,4 +321,5 @@ After the C demo works, the Python path is considered correct when:
 - `--rotate` and `--no-rotate` behave predictably
 - remote manual translation works without Argos or Tesseract installed on the Pi
 - remote camera translation recovers automatically after the MacBook server restarts
+- temporary MacBook webcam mode updates the Pi OLED and returns to `SERVER DOWN` after the sender disconnects
 - local mode still works when running the scripts without `--backend remote`

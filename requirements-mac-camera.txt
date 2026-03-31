@@ -1,0 +1,4 @@
+Pillow
+argostranslate
+websockets
+opencv-python
