@@ -1,50 +1,17 @@
-Traceback (most recent call last):
-  File "/home/treyson/clear-oled/translate_input_oled.py", line 191, in <module>
-    main()
-    ~~~~^^
-  File "/home/treyson/clear-oled/translate_input_oled.py", line 184, in main
-    asyncio.run(run_remote(args))
-    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3.13/asyncio/runners.py", line 195, in run
-    return runner.run(main)
-           ~~~~~~~~~~^^^^^^
-  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
-    return self._loop.run_until_complete(task)
-           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
-  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
-    return future.result()
-           ~~~~~~~~~~~~~^^
-  File "/home/treyson/clear-oled/translate_input_oled.py", line 132, in run_remote
-    oled = OLEDDisplay(rotate=args.rotate, dc_pin=args.dc_pin, rst_pin=args.rst_pin)
-  File "/home/treyson/clear-oled/oled_display.py", line 239, in __init__
-    driver_class, backend_name = resolve_driver_class()
-                                 ~~~~~~~~~~~~~~~~~~~~^^
-  File "/home/treyson/clear-oled/oled_display.py", line 49, in resolve_driver_class
-    raise RuntimeError(
-    ...<5 lines>...
-    ) from exc
-RuntimeError: No supported OLED driver found.
-Preferred path: download Waveshare's OLED_Module_Code package and place its RaspberryPi/python/lib directory at ./lib in this repo.
-Fallback path on the Raspberry Pi: install the maintained package with `pip install waveshare-transparent-oled pillow`.
-(.venv) treyson@treyson:~/clear-oled $ 
-    return self._loop.run_until_complete(task)
-           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
-  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
-    return future.result()
-           ~~~~~~~~~~~~~^^
-  File "/home/treyson/clear-oled/translate_input_oled.py", line 132, in run_remote
-    oled = OLEDDisplay(rotate=args.rotate, dc_pin=args.dc_pin, rst_pin=args.rst_pin)
-  File "/home/treyson/clear-oled/oled_display.py", line 283, in __init__
-    driver_class, backend_name = resolve_driver_class()
-                                 ~~~~~~~~~~~~~~~~~~~~^^
-  File "/home/treyson/clear-oled/oled_display.py", line 90, in resolve_driver_class
-    raise RuntimeError(
-    ...<8 lines>...
-    )
-RuntimeError: No supported OLED driver found.
-Preferred path: download Waveshare's OLED_Module_Code package and place its RaspberryPi/python/lib directory at ./lib in this repo.
-Fallback path on the Raspberry Pi: install the maintained package and its hardware dependencies with `python3 -m pip install waveshare-transparent-oled pillow adafruit-blinka`.
-Current interpreter: /home/treyson/clear-oled/.venv/bin/python3
-Driver import details:
-- waveshare_OLED: ModuleNotFoundError: No module named 'smbus'
-- waveshare_transparent_oled: ModuleNotFoundError: No module named 'lgpio'
+cd /home/treyson/clear-oled
+
+deactivate 2>/dev/null || true
+rm -rf .venv
+
+sudo apt-get update
+sudo apt-get install -y python3-pil python3-lgpio python3-spidev python3-smbus
+
+python3 -m venv --system-site-packages .venv-pi
+source .venv-pi/bin/activate
+
+python -c "import sys; print(sys.executable)"
+python -c "import smbus, lgpio, spidev; print('hardware imports ok')"
+
+python -m pip install -r requirements-pi.txt
+
+python hello_oled_1in51.py --text hello
