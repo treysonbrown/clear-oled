@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>clear-oled reminders</title>
+    <link rel="stylesheet" href="/static/reminders/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <p class="eyebrow">clear-oled / reminder console</p>
+        <div class="hero-row">
+          <div>
+            <h1>Schedule messages for the OLED.</h1>
+            <p class="lede">
+              Create one-time reminders and let the scheduler deliver them to the Raspberry Pi
+              display at the exact minute you choose.
+            </p>
+          </div>
+          <div class="clock-card">
+            <span class="chip-label">Local time</span>
+            <strong id="current-time">--:--</strong>
+            <span id="current-date">Loading...</span>
+          </div>
+        </div>
+        <div id="status-banner" class="status-banner status-idle">Loading scheduler status...</div>
+      </header>
+
+      <section class="grid">
+        <article class="panel panel-form">
+          <div class="panel-head">
+            <p class="eyebrow">compose</p>
+            <h2 id="form-title">Create reminder</h2>
+          </div>
+          <form id="reminder-form">
+            <label>
+              <span>Message</span>
+              <textarea
+                id="message"
+                name="message"
+                rows="4"
+                maxlength="120"
+                placeholder="Take medicine"
+                required
+              ></textarea>
+            </label>
+            <div class="field-row">
+              <label>
+                <span>Date</span>
+                <input id="date" name="date" type="date" required />
+              </label>
+              <label>
+                <span>Time</span>
+                <input id="time" name="time" type="time" required />
+              </label>
+            </div>
+            <label>
+              <span>Timezone</span>
+              <input id="timezone" name="timezone" type="text" readonly />
+            </label>
+            <p id="form-error" class="form-error" hidden></p>
+            <div class="form-actions">
+              <button type="submit" id="submit-button">Save reminder</button>
+              <button type="button" id="cancel-edit" class="ghost" hidden>Cancel edit</button>
+            </div>
+          </form>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <p class="eyebrow">queue</p>
+            <h2>Upcoming reminders</h2>
+          </div>
+          <div id="upcoming-list" class="stack empty-state">No reminders scheduled.</div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <p class="eyebrow">activity</p>
+          <h2>Recent delivery activity</h2>
+        </div>
+        <div id="activity-list" class="stack empty-state">No delivery activity yet.</div>
+      </section>
+    </main>
+
+    <template id="reminder-template">
+      <article class="reminder-card">
+        <div class="reminder-meta">
+          <span class="chip scheduled-time"></span>
+          <span class="badge status-badge"></span>
+        </div>
+        <h3 class="reminder-message"></h3>
+        <p class="reminder-detail"></p>
+        <div class="card-actions">
+          <button class="ghost edit-button" type="button">Edit</button>
+          <button class="ghost danger cancel-button" type="button">Cancel</button>
+        </div>
+      </article>
+    </template>
+
+    <template id="activity-template">
+      <article class="activity-card">
+        <div class="activity-head">
+          <h3 class="activity-message"></h3>
+          <span class="badge activity-badge"></span>
+        </div>
+        <p class="activity-detail"></p>
+      </article>
+    </template>
+
+    <script src="/static/reminders/app.js" defer></script>
+  </body>
+</html>

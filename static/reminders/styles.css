@@ -1,0 +1,313 @@
+:root {
+  --bg: #111315;
+  --bg-soft: #171b1f;
+  --panel: rgba(20, 24, 28, 0.92);
+  --panel-edge: rgba(245, 164, 70, 0.26);
+  --text: #f5ecdc;
+  --muted: #a59a86;
+  --accent: #f5a446;
+  --accent-soft: rgba(245, 164, 70, 0.12);
+  --danger: #ef6b50;
+  --danger-soft: rgba(239, 107, 80, 0.14);
+  --success: #73d39c;
+  --warning: #f0c15d;
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+  --mono: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+  --sans: "Space Grotesk", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  font-family: var(--sans);
+  background:
+    radial-gradient(circle at top left, rgba(245, 164, 70, 0.16), transparent 30%),
+    linear-gradient(145deg, #0d0f11 0%, #12161a 45%, #0b0c0d 100%);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.shell {
+  width: min(1120px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 2rem 0 3rem;
+}
+
+.hero {
+  margin-bottom: 1.5rem;
+}
+
+.hero-row {
+  display: grid;
+  grid-template-columns: 1.8fr 0.8fr;
+  gap: 1rem;
+  align-items: end;
+}
+
+.eyebrow {
+  margin: 0 0 0.5rem;
+  color: var(--accent);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(2rem, 6vw, 3.8rem);
+  line-height: 0.94;
+  letter-spacing: -0.04em;
+  max-width: 10ch;
+}
+
+.lede {
+  margin-top: 0.9rem;
+  max-width: 54ch;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.clock-card,
+.panel,
+.status-banner {
+  border: 1px solid var(--panel-edge);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.clock-card {
+  padding: 1rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: flex-start;
+}
+
+.clock-card strong {
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+  font-family: var(--mono);
+}
+
+.clock-card span:last-child {
+  color: var(--muted);
+}
+
+.chip-label {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.status-banner {
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+  font-family: var(--mono);
+}
+
+.status-idle {
+  color: var(--success);
+}
+
+.status-retrying {
+  color: var(--warning);
+}
+
+.status-delivering {
+  color: var(--accent);
+}
+
+.status-error {
+  color: var(--danger);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 440px) minmax(0, 1fr);
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.panel {
+  padding: 1.2rem;
+}
+
+.panel-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 1rem;
+}
+
+.panel-head h2 {
+  font-size: 1.35rem;
+}
+
+form,
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+label span {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.86rem;
+}
+
+input,
+textarea {
+  width: 100%;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid rgba(245, 164, 70, 0.18);
+  background: rgba(10, 12, 14, 0.72);
+  color: var(--text);
+  resize: vertical;
+}
+
+input:focus,
+textarea:focus,
+button:focus {
+  outline: 2px solid rgba(245, 164, 70, 0.3);
+  outline-offset: 2px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.8rem;
+}
+
+.form-actions,
+.card-actions {
+  display: flex;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+button {
+  border: 1px solid transparent;
+  cursor: pointer;
+  padding: 0.72rem 1rem;
+  background: linear-gradient(180deg, #f7b055 0%, #d7872a 100%);
+  color: #121212;
+  font-weight: 700;
+}
+
+button.ghost {
+  background: transparent;
+  border-color: rgba(245, 164, 70, 0.24);
+  color: var(--text);
+}
+
+button.danger {
+  border-color: rgba(239, 107, 80, 0.32);
+  color: var(--danger);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.form-error {
+  color: var(--danger);
+}
+
+.reminder-card,
+.activity-card {
+  padding: 1rem;
+  border: 1px solid rgba(245, 164, 70, 0.14);
+  background: var(--bg-soft);
+}
+
+.reminder-meta,
+.activity-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.chip,
+.badge {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.chip {
+  padding: 0.45rem 0.55rem;
+  background: var(--accent-soft);
+  color: var(--accent);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.badge {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid rgba(245, 164, 70, 0.18);
+  color: var(--muted);
+}
+
+.reminder-message,
+.activity-message {
+  margin-top: 0.8rem;
+  font-size: 1.05rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+
+.reminder-detail,
+.activity-detail {
+  margin-top: 0.55rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.empty-state {
+  color: var(--muted);
+  min-height: 4rem;
+  justify-content: center;
+}
+
+@media (max-width: 860px) {
+  .hero-row,
+  .grid,
+  .field-row {
+    grid-template-columns: 1fr;
+  }
+
+  .shell {
+    width: min(100% - 1rem, 100%);
+    padding-top: 1rem;
+  }
+
+  h1 {
+    max-width: 12ch;
+  }
+}

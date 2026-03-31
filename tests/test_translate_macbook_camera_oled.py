@@ -2,7 +2,12 @@ import unittest
 from unittest.mock import patch
 
 import translate_macbook_camera_oled
-from translate_macbook_camera_oled import StabilityGate, process_frame, validate_args
+from translate_macbook_camera_oled import (
+    StabilityGate,
+    contains_meaningful_japanese,
+    process_frame,
+    validate_args,
+)
 
 
 try:
@@ -65,6 +70,10 @@ class TranslateMacbookCameraOledLogicTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "opencv-python"):
                 translate_macbook_camera_oled.ensure_opencv()
 
+    def test_contains_meaningful_japanese_rejects_prolonged_sound_mark_only(self):
+        self.assertFalse(contains_meaningful_japanese("ー"))
+        self.assertTrue(contains_meaningful_japanese("猫"))
+
 
 @unittest.skipUnless(HAS_PIL, "Pillow is required for image tests.")
 class TranslateMacbookCameraOledImageTests(unittest.TestCase):
@@ -118,6 +127,22 @@ class TranslateMacbookCameraOledImageTests(unittest.TestCase):
 
         self.assertIsNone(translated)
         self.assertEqual(last_translation, "cat")
+
+    def test_process_frame_skips_non_meaningful_japanese_text(self):
+        gate = StabilityGate(history_size=3, min_stable=1)
+
+        translated, last_translation = process_frame(
+            image=self.image,
+            ocr_engine=FakeOcrEngine("ー"),
+            translator=FakeTranslator(""),
+            gate=gate,
+            crop_width=320,
+            crop_height=160,
+            last_translation=None,
+        )
+
+        self.assertIsNone(translated)
+        self.assertIsNone(last_translation)
 
 
 if __name__ == "__main__":

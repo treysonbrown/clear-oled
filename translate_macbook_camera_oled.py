@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import re
 import sys
 import time
 
@@ -26,9 +27,14 @@ except ModuleNotFoundError:
     cv2 = None
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageFilter, ImageOps
 except ModuleNotFoundError:
     Image = None
+    ImageFilter = None
+    ImageOps = None
+
+
+MEANINGFUL_JAPANESE_CHAR_RE = re.compile(r"[\u3041-\u3096\u30a1-\u30fa\u3400-\u4dbf\u4e00-\u9fff]")
 
 
 def parse_args():
@@ -91,7 +97,7 @@ def ensure_opencv():
 
 
 def ensure_pillow():
-    if Image is None:
+    if Image is None or ImageFilter is None or ImageOps is None:
         raise RuntimeError("Pillow is required. Install it with `python3 -m pip install pillow`.")
 
 
@@ -125,23 +131,92 @@ def read_camera_image(camera):
     return frame_to_image(frame)
 
 
+def contains_meaningful_japanese(text):
+    return bool(MEANINGFUL_JAPANESE_CHAR_RE.search(normalize_text(text)))
+
+
+def preprocess_crop_variants(image):
+    ensure_pillow()
+
+    grayscale = ImageOps.grayscale(image)
+    enlarged = grayscale.resize((image.width * 2, image.height * 2))
+    autocontrast = ImageOps.autocontrast(enlarged)
+    sharpened = autocontrast.filter(ImageFilter.SHARPEN)
+    thresholded = sharpened.point(lambda value: 255 if value > 165 else 0, mode="1").convert("L")
+
+    return [
+        image,
+        grayscale.convert("RGB"),
+        autocontrast.convert("RGB"),
+        sharpened.convert("RGB"),
+        thresholded.convert("RGB"),
+    ]
+
+
+def score_ocr_text(text):
+    normalized = normalize_text(text)
+    if not normalized:
+        return -1
+
+    score = len(normalized)
+    if contains_japanese(normalized):
+        score += 10
+    if contains_meaningful_japanese(normalized):
+        score += 30
+    if normalized.isdigit():
+        score -= 10
+    if normalized in {"ー", "-", "_", "一"}:
+        score -= 20
+
+    return score
+
+
+def extract_best_ocr_text(image, ocr_engines, debug=False):
+    crop_variants = preprocess_crop_variants(image)
+    best_text = ""
+    best_score = -1
+
+    for engine_name, engine in ocr_engines:
+        for variant_index, variant in enumerate(crop_variants):
+            candidate = normalize_text(engine.extract_text(variant))
+            score = score_ocr_text(candidate)
+            if debug:
+                debug_log(debug, f"OCR candidate {engine_name}/variant-{variant_index}: {candidate!r}")
+            if score > best_score:
+                best_text = candidate
+                best_score = score
+
+    return best_text
+
+
 def process_frame(image, ocr_engine, translator, gate, crop_width, crop_height, last_translation, debug=False):
     crop = center_crop(image, crop_width, crop_height)
-    ocr_text = ocr_engine.extract_text(crop)
+    ocr_engines = [("primary", ocr_engine)]
+    language = getattr(ocr_engine, "language", None)
+    psm = getattr(ocr_engine, "psm", None)
+
+    if language and psm != "7":
+        ocr_engines.append(("psm7", TesseractOcrEngine(language=ocr_engine.language, psm="7")))
+    if language and psm != "11":
+        ocr_engines.append(("psm11", TesseractOcrEngine(language=ocr_engine.language, psm="11")))
+
+    ocr_text = extract_best_ocr_text(crop, ocr_engines, debug=debug)
     stable_text = gate.observe(ocr_text)
     debug_log(debug, f"OCR raw: {normalize_text(ocr_text)!r}")
 
     if not stable_text:
         return None, last_translation
 
-    if not contains_japanese(stable_text):
-        debug_log(debug, f"Stable OCR has no Japanese characters: {stable_text!r}")
+    if not contains_meaningful_japanese(stable_text):
+        debug_log(debug, f"Stable OCR has no meaningful Japanese characters: {stable_text!r}")
         return None, last_translation
 
     translated = normalize_text(translator.translate(stable_text))
     debug_log(debug, f"Stable OCR: {stable_text!r} -> {translated!r}")
 
     if not translated or translated == last_translation:
+        if not translated:
+            debug_log(debug, f"Skipping send because translation was empty for: {stable_text!r}")
         return None, last_translation
 
     return translated, translated
@@ -179,6 +254,8 @@ async def run(args):
             cycle_start = time.monotonic()
 
             try:
+                if client.websocket is None:
+                    await client._ensure_websocket()
                 image = await asyncio.to_thread(read_camera_image, camera)
                 translated, last_translation = process_frame(
                     image=image,
