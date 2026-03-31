@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 
 import argparse
-import re
+import asyncio
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
-import unicodedata
-from collections import Counter, deque
 from io import BytesIO
 
 try:
@@ -17,17 +14,32 @@ except ModuleNotFoundError:
     Image = None
 
 from oled_display import OLEDDisplay
-
-
-JAPANESE_CHAR_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
-WHITESPACE_RE = re.compile(r"\s+")
-PUNCTUATION_SPACE_RE = re.compile(r"\s+([,.;:!?。、「」『』（）()])")
+from remote_client import (
+    RemoteAuthenticationError,
+    RemoteConnectionError,
+    RemoteProtocolError,
+    RemoteTranslationClient,
+)
+from translation_core import (
+    ArgosTranslator,
+    StabilityGate,
+    TesseractOcrEngine,
+    center_crop,
+    contains_japanese,
+    normalize_text,
+)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Capture Japanese text with the Pi camera, translate it locally, and display English on the OLED."
+        description="Capture Japanese text with the Pi camera and display the English result on the OLED."
     )
+    parser.add_argument("--backend", choices=("local", "remote"), default="local")
+    parser.add_argument("--remote-url", help="WebSocket URL for the remote OCR/translation server.")
+    parser.add_argument("--token", help="Shared auth token required by the remote server.")
+    parser.add_argument("--connect-timeout", type=float, default=5.0, help="Seconds to wait while connecting.")
+    parser.add_argument("--reconnect-delay", type=float, default=3.0, help="Seconds to wait before retrying.")
+    parser.add_argument("--status-text", default="SERVER DOWN", help="OLED text shown while the server is down.")
     parser.add_argument("--rotate", dest="rotate", action="store_true", default=True)
     parser.add_argument("--no-rotate", dest="rotate", action="store_false")
     parser.add_argument("--dc-pin", type=int, help="Optional BCM GPIO override for D/C.")
@@ -96,26 +108,20 @@ def parse_args():
     return parser.parse_args()
 
 
-def normalize_text(text):
-    normalized = unicodedata.normalize("NFKC", text or "")
-    normalized = WHITESPACE_RE.sub(" ", normalized).strip()
-    normalized = PUNCTUATION_SPACE_RE.sub(r"\1", normalized)
-    return normalized
+def validate_args(args):
+    if args.stable_frames > args.history_size:
+        raise ValueError("--stable-frames cannot be greater than --history-size.")
+
+    if args.backend == "remote":
+        if not args.remote_url:
+            raise ValueError("--remote-url is required when --backend remote is selected.")
+        if not args.token:
+            raise ValueError("--token is required when --backend remote is selected.")
 
 
-def contains_japanese(text):
-    return bool(JAPANESE_CHAR_RE.search(text or ""))
-
-
-def center_crop(image, crop_width, crop_height):
-    crop_width = max(1, min(crop_width, image.width))
-    crop_height = max(1, min(crop_height, image.height))
-
-    left = (image.width - crop_width) // 2
-    top = (image.height - crop_height) // 2
-    right = left + crop_width
-    bottom = top + crop_height
-    return image.crop((left, top, right, bottom))
+def debug_log(enabled, message):
+    if enabled:
+        print(message, file=sys.stderr)
 
 
 def detect_camera_command(preferred=None):
@@ -159,104 +165,6 @@ def capture_frame(camera_cmd, width, height):
     return Image.open(BytesIO(result.stdout)).convert("RGB")
 
 
-class TesseractOcrEngine:
-    def __init__(self, language="jpn", psm="6"):
-        self.language = language
-        self.psm = str(psm)
-        self.binary = shutil.which("tesseract")
-        if not self.binary:
-            raise RuntimeError("`tesseract` is not installed or not on PATH.")
-
-    def extract_text(self, image):
-        with tempfile.NamedTemporaryFile(suffix=".png") as handle:
-            image.save(handle.name)
-            result = subprocess.run(
-                [
-                    self.binary,
-                    handle.name,
-                    "stdout",
-                    "-l",
-                    self.language,
-                    "--oem",
-                    "1",
-                    "--psm",
-                    self.psm,
-                ],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=20,
-            )
-        return result.stdout
-
-
-class ArgosTranslator:
-    def __init__(self, from_code="ja", to_code="en"):
-        try:
-            import argostranslate.translate
-        except ImportError as exc:
-            raise RuntimeError(
-                "Argos Translate is not installed. Install it on the Raspberry Pi with "
-                "`python3 -m pip install argostranslate` and install a Japanese->English package."
-            ) from exc
-
-        installed_languages = argostranslate.translate.get_installed_languages()
-        from_language = next((lang for lang in installed_languages if lang.code == from_code), None)
-        to_language = next((lang for lang in installed_languages if lang.code == to_code), None)
-
-        if from_language is None or to_language is None:
-            raise RuntimeError(
-                "Argos Translate language packages for Japanese and English are not installed."
-            )
-
-        translation = from_language.get_translation(to_language)
-        if translation is None:
-            raise RuntimeError("No installed Argos translation package found for Japanese -> English.")
-
-        self.translation = translation
-
-    def translate(self, text):
-        return self.translation.translate(text)
-
-
-class StabilityGate:
-    def __init__(self, history_size=5, min_stable=3):
-        self.history_size = max(1, history_size)
-        self.min_stable = max(1, min_stable)
-        self.history = deque(maxlen=self.history_size)
-        self.last_accepted = None
-        self.latest_raw = {}
-
-    def observe(self, raw_text):
-        normalized = normalize_text(raw_text)
-        self.history.append(normalized)
-        self.latest_raw[normalized] = raw_text
-
-        if not normalized:
-            return None
-
-        counts = Counter(item for item in self.history if item)
-        candidate, count = counts.most_common(1)[0]
-
-        if normalized != candidate:
-            return None
-
-        if count < self.min_stable:
-            return None
-
-        if candidate == self.last_accepted:
-            return None
-
-        self.last_accepted = candidate
-        return normalize_text(self.latest_raw[candidate])
-
-
-def debug_log(enabled, message):
-    if enabled:
-        print(message, file=sys.stderr)
-
-
 def sleep_until_next_cycle(start_time, interval_seconds):
     elapsed = time.monotonic() - start_time
     remaining = interval_seconds - elapsed
@@ -264,7 +172,14 @@ def sleep_until_next_cycle(start_time, interval_seconds):
         time.sleep(remaining)
 
 
-def run_loop(args):
+async def sleep_until_next_cycle_async(start_time, interval_seconds):
+    elapsed = time.monotonic() - start_time
+    remaining = interval_seconds - elapsed
+    if remaining > 0:
+        await asyncio.sleep(remaining)
+
+
+def run_local_loop(args):
     camera_cmd = detect_camera_command(args.camera_cmd)
     ocr_engine = TesseractOcrEngine(language=args.ocr_lang, psm=args.ocr_psm)
     translator = ArgosTranslator()
@@ -274,6 +189,7 @@ def run_loop(args):
 
     debug_log(args.debug, f"Using camera command: {camera_cmd}")
     debug_log(args.debug, f"Using OLED backend: {oled.backend_name}")
+    debug_log(args.debug, "Using translation backend: local")
 
     try:
         while True:
@@ -324,14 +240,103 @@ def run_loop(args):
         oled.close()
 
 
+async def run_remote_loop(args):
+    camera_cmd = detect_camera_command(args.camera_cmd)
+    oled = OLEDDisplay(rotate=args.rotate, dc_pin=args.dc_pin, rst_pin=args.rst_pin)
+    client = RemoteTranslationClient(
+        url=args.remote_url,
+        token=args.token,
+        connect_timeout=args.connect_timeout,
+        debug=args.debug,
+        logger=lambda message: debug_log(True, message),
+    )
+    status_visible = False
+
+    debug_log(args.debug, f"Using camera command: {camera_cmd}")
+    debug_log(args.debug, f"Using OLED backend: {oled.backend_name}")
+    debug_log(args.debug, f"Using translation backend: remote url={args.remote_url}")
+
+    try:
+        while True:
+            cycle_start = time.monotonic()
+
+            try:
+                frame = capture_frame(camera_cmd, args.camera_width, args.camera_height)
+                crop = center_crop(frame, args.crop_width, args.crop_height)
+                response = await client.send_frame(
+                    image=crop,
+                    source_width=frame.width,
+                    source_height=frame.height,
+                    crop_width=crop.width,
+                    crop_height=crop.height,
+                    ocr_lang=args.ocr_lang,
+                    ocr_psm=args.ocr_psm,
+                )
+            except subprocess.CalledProcessError as exc:
+                stderr = exc.stderr.strip() if isinstance(exc.stderr, str) else exc.stderr
+                debug_log(args.debug, f"Capture command failed: {stderr}")
+                await sleep_until_next_cycle_async(cycle_start, args.interval)
+                continue
+            except RemoteAuthenticationError as exc:
+                debug_log(args.debug, f"Remote authentication failed: {exc}")
+                if not status_visible:
+                    oled.display_text(args.status_text)
+                    status_visible = True
+                await client.close()
+                await sleep_until_next_cycle_async(cycle_start, max(args.reconnect_delay, 15.0))
+                continue
+            except (RemoteConnectionError, RemoteProtocolError) as exc:
+                debug_log(args.debug, f"Remote connection failure: {exc}")
+                if not status_visible:
+                    oled.display_text(args.status_text)
+                    status_visible = True
+                await client.close()
+                await sleep_until_next_cycle_async(cycle_start, args.reconnect_delay)
+                continue
+            except Exception as exc:
+                debug_log(args.debug, f"Capture/remote failure: {exc}")
+                await sleep_until_next_cycle_async(cycle_start, args.interval)
+                continue
+
+            if response["type"] == "translation":
+                translated = normalize_text(response["translated_text"])
+                if translated:
+                    oled.display_text(translated)
+                    status_visible = False
+                    debug_log(
+                        args.debug,
+                        f"Remote translation: {response['source_text']!r} -> {translated!r}",
+                    )
+            elif response["type"] == "error":
+                debug_log(
+                    args.debug,
+                    f"Remote server error {response['code']}: {response['message']}",
+                )
+            elif response["type"] == "noop":
+                debug_log(args.debug, f"Remote noop: {response['reason']}")
+
+            await sleep_until_next_cycle_async(cycle_start, args.interval)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        await client.close()
+        oled.close()
+
+
 def main():
     args = parse_args()
 
-    if args.stable_frames > args.history_size:
-        print("--stable-frames cannot be greater than --history-size.", file=sys.stderr)
-        raise SystemExit(2)
+    try:
+        validate_args(args)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        raise SystemExit(2) from exc
 
-    run_loop(args)
+    if args.backend == "remote":
+        asyncio.run(run_remote_loop(args))
+        return
+
+    run_local_loop(args)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 import unittest
 
 
-from translate_camera_oled import StabilityGate, contains_japanese, normalize_text
+from translate_camera_oled import StabilityGate, contains_japanese, normalize_text, validate_args
 
 
 try:
@@ -28,6 +28,35 @@ class TranslateCameraOledLogicTests(unittest.TestCase):
         self.assertIsNone(gate.observe("猫 "))
         self.assertEqual(gate.observe("猫"), "猫")
         self.assertIsNone(gate.observe("猫"))
+
+    def test_validate_args_requires_remote_url_and_token_for_remote_backend(self):
+        args = type(
+            "Args",
+            (),
+            {
+                "backend": "remote",
+                "remote_url": None,
+                "token": None,
+                "stable_frames": 3,
+                "history_size": 5,
+            },
+        )()
+        with self.assertRaises(ValueError):
+            validate_args(args)
+
+    def test_validate_args_allows_local_backend_without_remote_fields(self):
+        args = type(
+            "Args",
+            (),
+            {
+                "backend": "local",
+                "remote_url": None,
+                "token": None,
+                "stable_frames": 3,
+                "history_size": 5,
+            },
+        )()
+        validate_args(args)
 
 
 @unittest.skipUnless(HAS_PIL, "Pillow is required for image crop tests.")

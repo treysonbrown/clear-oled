@@ -110,17 +110,116 @@ Optional GPIO overrides are only used if the selected backend supports them:
 python3 hello_oled_1in51.py --text hello --dc-pin 25 --rst-pin 27
 ```
 
-## 4. Manual translation test without the camera
+## 4. Choose a translation mode
 
-If the OLED is working and you want to test Japanese -> English translation before the camera arrives, install a local translation backend on the Raspberry Pi.
+This repo now supports two translation modes:
 
-Install the Python packages:
+- `local`: OCR and translation run on the Raspberry Pi
+- `remote`: the Pi captures images and drives the OLED, but OCR and translation run on another machine such as your MacBook
+
+Use `local` when the Pi has enough storage for Tesseract and Argos. Use `remote` when you want the Pi to stay lightweight.
+
+## 5. Remote MacBook mode
+
+This is the intended path when the Pi SD card is too small for the OCR or translation dependencies.
+
+### 5.1 Install the lightweight Pi dependencies
+
+On the Raspberry Pi:
+
+```bash
+cd /path/to/clear-oled
+python3 -m pip install -r requirements-pi.txt
+```
+
+The Pi still needs the OLED driver from section 2 and the camera command (`rpicam-still` or `libcamera-still`), but it no longer needs Argos or Tesseract in remote mode.
+
+### 5.2 Install the server dependencies on the MacBook
+
+On the MacBook:
+
+```bash
+cd /path/to/clear-oled
+python3 -m pip install -r requirements-server.txt
+```
+
+The server host also needs Tesseract with Japanese language data installed through the local OS package manager.
+
+Then install a Japanese -> English Argos translation package on the MacBook:
+
+```bash
+python3 - <<'PY'
+import argostranslate.package
+import argostranslate.translate
+
+available = argostranslate.package.get_available_packages()
+package = next(
+    pkg for pkg in available
+    if pkg.from_code == "ja" and pkg.to_code == "en"
+)
+path = package.download()
+argostranslate.package.install_from_path(path)
+PY
+```
+
+### 5.3 Start the WebSocket translation server
+
+On the MacBook:
+
+```bash
+python3 translation_server_ws.py --token change-me --debug
+```
+
+By default the server listens on `0.0.0.0:8765`.
+
+### 5.4 Validate remote translation without the camera
+
+On the Raspberry Pi:
+
+```bash
+python3 translate_input_oled.py \
+  --backend remote \
+  --remote-url ws://YOUR-MACBOOK-HOSTNAME.local:8765 \
+  --token change-me
+```
+
+Or translate one phrase and exit:
+
+```bash
+python3 translate_input_oled.py \
+  --backend remote \
+  --remote-url ws://YOUR-MACBOOK-HOSTNAME.local:8765 \
+  --token change-me \
+  --text "猫"
+```
+
+### 5.5 Run the remote camera pipeline
+
+Once the camera module is installed on the Pi:
+
+```bash
+python3 translate_camera_oled.py \
+  --backend remote \
+  --remote-url ws://YOUR-MACBOOK-HOSTNAME.local:8765 \
+  --token change-me \
+  --debug
+```
+
+This runtime captures frames on the Pi, center-crops them, sends them to the MacBook over WebSocket, and updates the OLED only when the server returns a new stable translation.
+
+If the MacBook is offline or unreachable, the Pi will show `SERVER DOWN` on the OLED and keep retrying.
+
+## 6. Local Pi-only mode
+
+If you want everything to run directly on the Pi, install the heavier dependencies there instead.
+
+### 6.1 Manual translation without the camera
 
 ```bash
 python3 -m pip install pillow argostranslate
 ```
 
-Then install a Japanese -> English Argos translation package. One way is:
+Then install a Japanese -> English Argos package:
 
 ```bash
 python3 - <<'PY'
@@ -141,36 +240,32 @@ Now you can type Japanese into the terminal and have the OLED show the English t
 
 ```bash
 python3 translate_input_oled.py
-```
-
-Or translate a single phrase and exit:
-
-```bash
 python3 translate_input_oled.py --text "猫"
 ```
 
-## 5. Camera translation runtime
+### 6.2 Camera translation on the Pi
 
-Once the camera module is installed, use the continuous pipeline:
-
-```bash
-python3 translate_camera_oled.py --debug
-```
-
-This runtime captures frames from `rpicam-still` or `libcamera-still`, runs Japanese OCR with Tesseract, translates stable results locally, and pushes the latest English translation to the OLED.
-
-You will need local OCR installed on the Pi for this path:
+Install local OCR on the Pi:
 
 ```bash
 sudo apt-get install -y tesseract-ocr tesseract-ocr-jpn
 ```
 
-## 6. Acceptance checks
+Then run the local camera pipeline:
+
+```bash
+python3 translate_camera_oled.py --backend local --debug
+```
+
+This keeps the original behavior: the Pi captures frames, runs OCR locally, translates locally, and pushes the newest English result to the OLED.
+
+## 7. Acceptance checks
 
 After the C demo works, the Python path is considered correct when:
 
 - `hello` renders centered and legible
 - clearing the display produces a blank panel
 - `--rotate` and `--no-rotate` behave predictably
-- restarting the script several times does not change the output quality
-- manual Japanese input produces English output on the OLED
+- remote manual translation works without Argos or Tesseract installed on the Pi
+- remote camera translation recovers automatically after the MacBook server restarts
+- local mode still works when running the scripts without `--backend remote`
