@@ -1,5 +1,7 @@
 # clear-oled
 
+
+python3 translate_input_oled.py --backend remote --remote-url ws://192.168.1.123:8765 --token change-me --text "猫"
 Bring-up notes and a Python wrapper for the Waveshare 1.51-inch Transparent OLED.
 
 ## Wiring baseline
