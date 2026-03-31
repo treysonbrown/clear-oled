@@ -135,6 +135,7 @@ async def run_remote(args):
         token=args.token,
         connect_timeout=args.connect_timeout,
     )
+    keep_display_visible = False
 
     try:
         if args.text:
@@ -147,28 +148,33 @@ async def run_remote(args):
 
             if translated:
                 print(translated)
+                keep_display_visible = True
             return
 
         await interactive_loop_remote(oled, client)
     finally:
         await client.close()
-        oled.close()
+        if not keep_display_visible:
+            oled.close()
 
 
 def run_local(args):
     translator = ArgosTranslator()
     oled = OLEDDisplay(rotate=args.rotate, dc_pin=args.dc_pin, rst_pin=args.rst_pin)
+    keep_display_visible = False
 
     try:
         if args.text:
             translated = translate_and_display_local(oled, translator, args.text)
             if translated:
                 print(translated)
+                keep_display_visible = True
             return
 
         interactive_loop_local(oled, translator)
     finally:
-        oled.close()
+        if not keep_display_visible:
+            oled.close()
 
 
 def main():
