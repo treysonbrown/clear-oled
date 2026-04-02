@@ -8,6 +8,7 @@ from display_protocol import (
     CLOSE_BAD_REQUEST,
     MessageValidationError,
     build_auth_message,
+    build_clear_message,
     build_display_text_message,
     parse_server_message,
 )
@@ -104,7 +105,14 @@ class DisplayUpdateClient:
     async def send_text(self, text):
         await self._ensure_websocket()
         payload = build_display_text_message(str(uuid.uuid4()), text)
+        return await self._send_payload(payload)
 
+    async def clear(self):
+        await self._ensure_websocket()
+        payload = build_clear_message(str(uuid.uuid4()))
+        return await self._send_payload(payload)
+
+    async def _send_payload(self, payload):
         try:
             await self.websocket.send(payload)
             raw_response = await self.websocket.recv()

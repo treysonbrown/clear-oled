@@ -7,21 +7,15 @@ import contextlib
 
 from display_client import DisplayConnectionError, DisplayUpdateClient
 from oled_display import fit_transcript_tail_text
-from transcription_audio import (
-    FRAME_BYTES,
-    SAMPLE_RATE,
-    AudioDependencyError,
-    AudioPhraseDetector,
-    MicrophoneInput,
-    MicrophonePermissionError,
-    list_audio_devices,
+from transcription_audio import list_audio_devices
+from transcription_engine_macos import (
+    MacOSSpeechHelperError,
+    MacOSSpeechPermissionError,
+    MacOSSpeechSession,
 )
-from transcription_engine import TranscriptionEngineError, WhisperTranscriptionEngine
 from transcription_events import EventBroadcaster
-from transcription_store import TranscriptionStore
 from transcription_types import (
     DEFAULT_LANGUAGE,
-    DEFAULT_MODEL,
     DISPLAY_STATE_CONNECTED,
     DISPLAY_STATE_DISCONNECTED,
     DISPLAY_STATE_UNKNOWN,
@@ -35,7 +29,6 @@ from transcription_types import (
     SERVICE_STATE_STARTING,
     SERVICE_STATE_STOPPING,
     TranscriptionConflictError,
-    TranscriptionNotFoundError,
     format_utc,
     normalize_transcript_text,
     now_utc,
@@ -50,24 +43,16 @@ class TranscriptionService:
         display_url,
         token,
         broadcaster=None,
-        audio_input_factory=None,
-        detector_factory=None,
-        engine_factory=None,
+        speech_session_factory=None,
         display_client_factory=None,
+        clear_after_silence_seconds=5.0,
         debug=False,
     ):
         self.store = store
         self.display_url = display_url
         self.token = token
         self.broadcaster = broadcaster or EventBroadcaster()
-        self.audio_input_factory = audio_input_factory or (lambda device_id=None: MicrophoneInput(device_id=device_id))
-        self.detector_factory = detector_factory or (lambda: AudioPhraseDetector())
-        self.engine_factory = engine_factory or (
-            lambda model_name=None: WhisperTranscriptionEngine(
-                model_name=model_name or DEFAULT_MODEL,
-                language=DEFAULT_LANGUAGE,
-            )
-        )
+        self.speech_session_factory = speech_session_factory or (lambda: MacOSSpeechSession())
         self.display_client_factory = display_client_factory or (
             lambda: DisplayUpdateClient(
                 url=self.display_url,
@@ -76,6 +61,7 @@ class TranscriptionService:
             )
         )
         self.debug = debug
+        self.clear_after_silence_seconds = max(0.0, float(clear_after_silence_seconds))
         self.control_lock = asyncio.Lock()
         self.service_state = SERVICE_STATE_IDLE
         self.mic_state = MIC_STATE_IDLE
@@ -86,12 +72,12 @@ class TranscriptionService:
         self.last_error = None
         self.last_display_error = None
         self.active_session = None
-        self.active_engine = None
+        self.speech_session = None
         self.session_task = None
         self.stop_event = None
-        self.audio_input = None
-        self.audio_queue = None
         self.display_client = None
+        self.last_final_text = ""
+        self.clear_task = None
 
     async def startup(self):
         self.store.mark_interrupted_sessions()
@@ -100,7 +86,18 @@ class TranscriptionService:
         await self.stop_session()
 
     def list_audio_devices(self):
-        return list_audio_devices()
+        try:
+            return list_audio_devices()
+        except Exception:
+            return [
+                {
+                    "id": "",
+                    "name": "System default microphone",
+                    "is_default": True,
+                    "max_input_channels": 1,
+                    "default_samplerate": 16000,
+                }
+            ]
 
     def get_session_detail(self, session_id):
         detail = self.store.get_session_with_segments(session_id)
@@ -123,8 +120,8 @@ class TranscriptionService:
             "current_partial": self.current_partial,
             "current_oled_text": self.current_oled_text,
             "current_session": self.active_session.to_api_dict() if self.active_session else None,
-            "engine_backend": self.active_engine.backend_name if self.active_engine else None,
-            "engine_model": self.active_engine.model_name if self.active_engine else None,
+            "engine_backend": self.speech_session.backend_name if self.speech_session else None,
+            "engine_model": self.speech_session.model_name if self.speech_session else None,
         }
 
     async def publish_status(self):
@@ -140,29 +137,28 @@ class TranscriptionService:
             self.last_error = None
             self.last_display_error = None
             self.current_partial = ""
+            self.current_oled_text = ""
+            self.last_final_text = ""
+            self.display_state = DISPLAY_STATE_UNKNOWN
+            self.display_connected = None
+            self._cancel_clear_task()
             await self.publish_status()
 
+            self.speech_session = self.speech_session_factory()
             try:
-                self.active_engine = await asyncio.to_thread(self.engine_factory, model or DEFAULT_MODEL)
-                self.audio_input = self.audio_input_factory(device_id=device_id)
-                self.audio_queue = asyncio.Queue(maxsize=256)
-                self.audio_input.start(loop=asyncio.get_running_loop(), queue=self.audio_queue)
-            except MicrophonePermissionError as exc:
+                await self.speech_session.start(device_id=device_id)
+            except MacOSSpeechPermissionError as exc:
                 self.service_state = SERVICE_STATE_IDLE
                 self.mic_state = MIC_STATE_PERMISSION_DENIED
                 self.last_error = str(exc)
+                self.speech_session = None
                 await self.publish_status()
                 raise
-            except (AudioDependencyError, TranscriptionEngineError, OSError, RuntimeError) as exc:
+            except (MacOSSpeechHelperError, OSError, RuntimeError) as exc:
                 self.service_state = SERVICE_STATE_IDLE
                 self.mic_state = MIC_STATE_ERROR
                 self.last_error = str(exc)
-                await self.publish_status()
-                raise
-            except Exception:
-                self.service_state = SERVICE_STATE_IDLE
-                self.mic_state = MIC_STATE_ERROR
-                self.last_error = "Unable to start the transcription session."
+                self.speech_session = None
                 await self.publish_status()
                 raise
 
@@ -170,7 +166,7 @@ class TranscriptionService:
             self.display_client = self.display_client_factory()
             self.active_session = self.store.create_session(
                 device_name=device_name,
-                model_name=self.active_engine.model_name,
+                model_name=self.speech_session.model_name,
                 language=DEFAULT_LANGUAGE,
                 display_connected=False,
             )
@@ -192,26 +188,21 @@ class TranscriptionService:
             self.service_state = SERVICE_STATE_STOPPING
             if self.stop_event is not None:
                 self.stop_event.set()
-            if self.audio_input is not None:
-                self.audio_input.stop()
-            if self.audio_queue is not None:
-                with contextlib.suppress(asyncio.QueueFull):
-                    self.audio_queue.put_nowait(None)
+            if self.speech_session is not None:
+                await self.speech_session.stop()
+            self._cancel_clear_task()
             await self.publish_status()
 
         await task
         return True
 
     def _resolve_device_name(self, device_id):
-        try:
-            devices = self.list_audio_devices()
-        except Exception:
-            return None
+        devices = self.list_audio_devices()
         for device in devices:
             if device["id"] == str(device_id):
                 return device["name"]
         for device in devices:
-            if device["is_default"]:
+            if device.get("is_default"):
                 return device["name"]
         return None
 
@@ -235,7 +226,7 @@ class TranscriptionService:
             self.active_session = self.store.update_session(
                 self.active_session.id,
                 display_connected=False,
-                last_error=self.last_display_error,
+                last_error=self.active_session.last_error,
             )
 
     async def _send_display_text(self, text):
@@ -248,122 +239,170 @@ class TranscriptionService:
             self.display_connected = True
             self.last_display_error = None
             self.current_oled_text = normalized
-            self.active_session = self.store.update_session(
-                self.active_session.id,
-                display_connected=True,
-                last_error=self.active_session.last_error,
-            )
+            if self.active_session is not None:
+                self.active_session = self.store.update_session(
+                    self.active_session.id,
+                    display_connected=True,
+                    last_error=self.active_session.last_error,
+                )
         except (DisplayConnectionError, Exception) as exc:
             self.display_state = DISPLAY_STATE_DISCONNECTED
             self.display_connected = False
             self.last_display_error = str(exc)
-            self.active_session = self.store.update_session(
-                self.active_session.id,
-                display_connected=False,
-                last_error=self.last_display_error,
-            )
+            if self.active_session is not None:
+                self.active_session = self.store.update_session(
+                    self.active_session.id,
+                    display_connected=False,
+                    last_error=self.active_session.last_error,
+                )
             await self.publish_status()
 
-    async def _handle_partial(self, session_id, event):
-        if self.active_session is None or session_id != self.active_session.id:
+    async def _clear_display(self):
+        if self.display_client is None:
             return
-        text = await asyncio.to_thread(
-            self.active_engine.transcribe_pcm16,
-            event.audio_bytes,
-            sample_rate=SAMPLE_RATE,
-        )
-        if not text or text == self.current_partial:
+        try:
+            await self.display_client.clear()
+            self.display_state = DISPLAY_STATE_CONNECTED
+            self.display_connected = True
+            self.last_display_error = None
+            self.current_oled_text = ""
+            if self.active_session is not None:
+                self.active_session = self.store.update_session(
+                    self.active_session.id,
+                    display_connected=True,
+                    last_error=self.active_session.last_error,
+                )
+        except (DisplayConnectionError, Exception) as exc:
+            self.display_state = DISPLAY_STATE_DISCONNECTED
+            self.display_connected = False
+            self.last_display_error = str(exc)
+            if self.active_session is not None:
+                self.active_session = self.store.update_session(
+                    self.active_session.id,
+                    display_connected=False,
+                    last_error=self.active_session.last_error,
+                )
+        await self.publish_status()
+
+    def _cancel_clear_task(self):
+        if self.clear_task is None:
             return
-        oled_text = fit_transcript_tail_text(text)
-        self.current_partial = text
+        self.clear_task.cancel()
+        self.clear_task = None
+
+    def _schedule_clear_after_silence(self):
+        self._cancel_clear_task()
+        if self.clear_after_silence_seconds <= 0:
+            return
+        self.clear_task = asyncio.create_task(self._clear_after_silence())
+
+    async def _clear_after_silence(self):
+        try:
+            await asyncio.sleep(self.clear_after_silence_seconds)
+            await self._clear_display()
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if asyncio.current_task() is self.clear_task:
+                self.clear_task = None
+
+    async def _handle_partial(self, session_id, text, *, event_time=None):
+        normalized = normalize_transcript_text(text)
+        if not normalized or normalized == self.current_partial:
+            return
+        oled_text = fit_transcript_tail_text(normalized)
+        self.current_partial = normalized
         await self._send_display_text(oled_text)
+        self._schedule_clear_after_silence()
+        timestamp = event_time or now_utc()
         await self.broadcaster.publish(
             "partial",
             {
                 "session_id": session_id,
-                "started_at_utc": format_utc(event.started_at),
-                "ended_at_utc": format_utc(event.ended_at),
-                "text": text,
+                "started_at_utc": format_utc(timestamp),
+                "ended_at_utc": format_utc(timestamp),
+                "text": normalized,
                 "oled_text": oled_text,
             },
         )
         await self.publish_status()
 
-    async def _handle_final(self, session_id, event):
-        if self.active_session is None or session_id != self.active_session.id:
-            return
-        text = await asyncio.to_thread(
-            self.active_engine.transcribe_pcm16,
-            event.audio_bytes,
-            sample_rate=SAMPLE_RATE,
-        )
+    async def _handle_final(self, session_id, text, *, event_time=None):
+        normalized = normalize_transcript_text(text)
         self.current_partial = ""
-        if not text:
+        if not normalized or normalized == self.last_final_text:
             await self.publish_status()
             return
 
-        oled_text = fit_transcript_tail_text(text)
-        segment = self.store.create_segment(
-            session_id=session_id,
-            started_at=event.started_at,
-            ended_at=event.ended_at,
-            text=text,
-            oled_text=oled_text,
-            created_at=now_utc(),
-        )
+        self.last_final_text = normalized
+        oled_text = fit_transcript_tail_text(normalized)
+        timestamp = event_time or now_utc()
+        try:
+            segment = self.store.create_segment(
+                session_id=session_id,
+                started_at=timestamp,
+                ended_at=timestamp,
+                text=normalized,
+                oled_text=oled_text,
+                created_at=timestamp,
+            )
+        except Exception as exc:
+            self.last_error = f"Transcript storage degraded: {exc}"
+            await self.publish_status()
+            segment = None
+
         await self._send_display_text(oled_text)
-        await self.broadcaster.publish("final_segment", segment.to_api_dict())
+        self._schedule_clear_after_silence()
+        if segment is not None:
+            await self.broadcaster.publish("final_segment", segment.to_api_dict())
         await self.publish_status()
 
     async def _run_session(self, session_id):
-        detector = self.detector_factory()
         session_error = None
 
         try:
             while True:
-                if self.stop_event.is_set() and self.audio_queue.empty():
-                    break
-                try:
-                    payload = await asyncio.wait_for(self.audio_queue.get(), timeout=0.2)
-                except asyncio.TimeoutError:
-                    continue
-
-                if payload is None:
-                    if self.stop_event.is_set():
+                event = await self.speech_session.read_event()
+                if event is None:
+                    if self.stop_event is not None and self.stop_event.is_set():
                         break
+                    session_error = self.speech_session.last_error or "Speech helper exited unexpectedly."
+                    break
+
+                event_type = event.get("type")
+                if event_type == "ready":
                     continue
-
-                for index in range(0, len(payload), FRAME_BYTES):
-                    frame_bytes = payload[index : index + FRAME_BYTES]
-                    if len(frame_bytes) < FRAME_BYTES:
-                        continue
-                    events = detector.feed(frame_bytes)
-                    for event in events:
-                        if event.type == "phrase_started":
-                            self.current_partial = ""
-                            await self.publish_status()
-                        elif event.type == "partial_ready":
-                            await self._handle_partial(session_id, event)
-                        elif event.type == "phrase_finished":
-                            await self._handle_final(session_id, event)
-
-            trailing = detector.flush()
-            if trailing is not None:
-                await self._handle_final(session_id, trailing)
+                if event_type == "partial":
+                    await self._handle_partial(session_id, event.get("text", ""))
+                    continue
+                if event_type == "final":
+                    await self._handle_final(session_id, event.get("text", ""))
+                    continue
+                if event_type == "error":
+                    session_error = event.get("message") or self.speech_session.last_error or "Speech helper failed."
+                    if event.get("code") == "permission_denied":
+                        self.mic_state = MIC_STATE_PERMISSION_DENIED
+                    else:
+                        self.mic_state = MIC_STATE_ERROR
+                    self.last_error = session_error
+                    await self.broadcaster.publish("error", {"message": session_error, "session_id": session_id})
+                    break
         except Exception as exc:
             session_error = str(exc)
             self.last_error = session_error
             self.mic_state = MIC_STATE_ERROR
             await self.broadcaster.publish("error", {"message": session_error, "session_id": session_id})
         finally:
-            if self.audio_input is not None:
-                self.audio_input.stop()
+            self._cancel_clear_task()
+            if self.speech_session is not None:
+                with contextlib.suppress(Exception):
+                    await self.speech_session.stop()
             if self.display_client is not None:
                 with contextlib.suppress(Exception):
                     await self.display_client.close()
 
             if self.active_session and self.active_session.id == session_id:
-                if session_error:
+                if session_error and not (self.stop_event and self.stop_event.is_set()):
                     self.active_session = self.store.mark_failed(
                         session_id,
                         last_error=session_error,
@@ -377,14 +416,12 @@ class TranscriptionService:
                     )
                 stopped_session = self.active_session
                 self.service_state = SERVICE_STATE_IDLE
-                self.mic_state = MIC_STATE_IDLE
+                self.mic_state = MIC_STATE_IDLE if not session_error else self.mic_state
                 self.current_partial = ""
                 self.session_task = None
                 self.stop_event = None
-                self.audio_input = None
-                self.audio_queue = None
                 self.display_client = None
-                self.active_engine = None
+                self.speech_session = None
                 self.active_session = None
                 await self.broadcaster.publish("session_stopped", stopped_session.to_api_dict())
                 await self.publish_status()

@@ -32,7 +32,7 @@ class TranscriptionStoreTests(unittest.TestCase):
     def test_session_and_segment_round_trip(self):
         session = self.store.create_session(
             device_name="Built-in Microphone",
-            model_name="mlx-community/whisper-tiny.en",
+            model_name="macos-speech",
             language="en",
             display_connected=True,
             now=self.now,
@@ -56,7 +56,7 @@ class TranscriptionStoreTests(unittest.TestCase):
     def test_running_sessions_are_marked_interrupted_on_startup(self):
         session = self.store.create_session(
             device_name="Built-in Microphone",
-            model_name="mlx-community/whisper-tiny.en",
+            model_name="macos-speech",
             language="en",
             display_connected=False,
             now=self.now,

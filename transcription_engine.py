@@ -28,7 +28,7 @@ class MlxWhisperAdapter:
             import mlx_whisper
         except ImportError as exc:
             raise TranscriptionEngineError("mlx-whisper is not installed.") from exc
-        self.model_name = model_name or DEFAULT_MODEL
+        self.model_name = model_name or "mlx-community/whisper-tiny-8bit"
         self.module = mlx_whisper
 
     def transcribe_pcm16(self, audio_bytes, *, sample_rate=16000, language=DEFAULT_LANGUAGE):
@@ -71,7 +71,7 @@ class FasterWhisperAdapter:
 class WhisperTranscriptionEngine:
     def __init__(self, *, model_name=DEFAULT_MODEL, language=DEFAULT_LANGUAGE):
         self.language = language or DEFAULT_LANGUAGE
-        self.model_name = model_name or DEFAULT_MODEL
+        self.model_name = model_name if model_name and model_name != DEFAULT_MODEL else "tiny.en"
         self.adapter = None
         errors = []
 

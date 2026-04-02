@@ -71,6 +71,11 @@ class DisplaySession:
         self.last_displayed = normalized
         return build_ack_message(request_id)
 
+    def handle_clear(self, request_id):
+        self.oled.clear()
+        self.last_displayed = None
+        return build_ack_message(request_id)
+
 
 class DisplayServer:
     def __init__(self, oled, token, status_text, debug=False):
@@ -124,7 +129,10 @@ class DisplayServer:
                     await websocket.close(code=CLOSE_BAD_REQUEST, reason="Auth can only be sent once.")
                     return
 
-                response = session.handle_display_text(message["request_id"], message["text"])
+                if message["type"] == "clear":
+                    response = session.handle_clear(message["request_id"])
+                else:
+                    response = session.handle_display_text(message["request_id"], message["text"])
                 await websocket.send(response)
         except Exception as exc:
             debug_log(self.debug, f"[display] session={session_id} failed: {exc}")

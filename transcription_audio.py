@@ -50,7 +50,16 @@ def require_audio_dependencies():
 
 
 def list_audio_devices():
-    require_audio_dependencies()
+    if sounddevice is None:
+        return [
+            {
+                "id": "",
+                "name": "System default microphone",
+                "is_default": True,
+                "max_input_channels": 1,
+                "default_samplerate": SAMPLE_RATE,
+            }
+        ]
     devices = []
     default_input, _ = sounddevice.default.device
     for index, device in enumerate(sounddevice.query_devices()):

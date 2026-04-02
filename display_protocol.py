@@ -8,7 +8,7 @@ CLOSE_BAD_REQUEST = 4400
 CLOSE_BAD_AUTH = 4401
 CLOSE_INTERNAL_ERROR = 1011
 
-CLIENT_MESSAGE_TYPES = {"auth", "display_text"}
+CLIENT_MESSAGE_TYPES = {"auth", "display_text", "clear"}
 SERVER_MESSAGE_TYPES = {"auth_ok", "ack", "error"}
 ERROR_CODES = {
     "BAD_AUTH",
@@ -64,6 +64,9 @@ def parse_client_message(raw_message):
         return message
 
     _require_string(message, "request_id")
+    if message_type == "clear":
+        return message
+
     text = message.get("text")
     if not isinstance(text, str):
         raise MessageValidationError("`text` must be a string.")
@@ -121,6 +124,10 @@ def build_auth_ok_message(session_id):
 
 def build_display_text_message(request_id, text):
     return dumps({"type": "display_text", "request_id": request_id, "text": text})
+
+
+def build_clear_message(request_id):
+    return dumps({"type": "clear", "request_id": request_id})
 
 
 def build_ack_message(request_id):

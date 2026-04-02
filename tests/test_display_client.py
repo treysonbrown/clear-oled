@@ -41,6 +41,25 @@ class DisplayClientTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(DisplayProtocolError):
                 await client.send_text("cat")
 
+    async def test_clear_sends_acknowledged_request(self):
+        websocket = AsyncMock()
+        websocket.recv = AsyncMock(
+            side_effect=[
+                '{"protocol_version":1,"session_id":"session-1","type":"auth_ok"}',
+                '{"request_id":"req-1","type":"ack"}',
+            ]
+        )
+
+        with patch.object(
+            display_client,
+            "websockets",
+            type("Websockets", (), {"connect": AsyncMock(return_value=websocket)})(),
+        ):
+            client = DisplayUpdateClient(url="ws://127.0.0.1:8766", token="secret", connect_timeout=1.0)
+            response = await client.clear()
+
+        self.assertEqual(response["type"], "ack")
+
 
 if __name__ == "__main__":
     unittest.main()

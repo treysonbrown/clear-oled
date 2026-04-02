@@ -264,7 +264,7 @@ If the MacBook sender stops or disconnects, the Pi OLED returns to `SERVER DOWN`
 
 ### 5.7 Live mic transcription console
 
-Use this path when you want the Mac microphone transcribed live and mirrored to the Pi OLED with a local web UI and local transcript storage.
+Use this path when you want the Mac microphone transcribed live and mirrored to the Pi OLED with a local web UI. The live path now uses macOS Speech for real-time partial results instead of local Whisper model downloads.
 
 On the Raspberry Pi, keep running the existing display receiver:
 
@@ -274,12 +274,18 @@ python3 -m pip install -r requirements-pi.txt
 python3 display_server_ws.py --token change-me --debug
 ```
 
-On the Mac, use Python 3.12 for the transcription app instead of the system Python 3.14:
+On the Mac, install the lightweight Python web dependencies:
 
 ```bash
-python3.12 -m venv .venv-transcription
+python3 -m venv .venv-transcription
 source .venv-transcription/bin/activate
 python -m pip install -r requirements-transcription-web.txt
+```
+
+The Mac also needs Xcode Command Line Tools because the speech helper runs through Swift:
+
+```bash
+xcode-select --install
 ```
 
 Then install and build the React frontend:
@@ -301,7 +307,12 @@ python transcription_web_app.py \
 
 Open `http://127.0.0.1:8090/` on the Mac. The web app can start and stop microphone capture, stream live partials, preview the current OLED text, and browse saved transcript sessions from `./data/transcription.db`.
 
-The mic pipeline uses the Mac microphone, local Whisper transcription, the existing display WebSocket protocol, and local SQLite persistence. If the Pi display server goes down, transcription continues and finalized segments are still stored locally.
+The first time you start a session, macOS should prompt for:
+
+- microphone access
+- speech recognition access
+
+Grant both. If the Pi display server goes down, the live session stays up and the UI shows the display error while speech continues locally.
 
 ## 6. Local Pi-only mode
 

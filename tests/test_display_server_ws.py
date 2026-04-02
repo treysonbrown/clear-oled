@@ -2,7 +2,13 @@ import unittest
 from unittest.mock import Mock, call
 
 from display_client import DisplayUpdateClient, websockets as client_websockets
-from display_protocol import CLOSE_BAD_AUTH, build_auth_message, build_display_text_message, parse_server_message
+from display_protocol import (
+    CLOSE_BAD_AUTH,
+    build_auth_message,
+    build_clear_message,
+    build_display_text_message,
+    parse_server_message,
+)
 from display_server_ws import DisplayServer, websockets as server_websockets
 
 
@@ -53,6 +59,18 @@ class DisplayServerTests(unittest.IsolatedAsyncioTestCase):
 
         cat_calls = [item for item in self.oled.display_text.call_args_list if item == call("cat")]
         self.assertEqual(len(cat_calls), 1)
+
+    async def test_clear_request_clears_oled(self):
+        async with client_websockets.connect(f"ws://127.0.0.1:{self.port}") as websocket:
+            await websocket.send(build_auth_message("secret", "macbook"))
+            await websocket.recv()
+            await websocket.send(build_display_text_message("req-1", "cat"))
+            await websocket.recv()
+            await websocket.send(build_clear_message("req-2"))
+            response = parse_server_message(await websocket.recv())
+
+        self.assertEqual(response["type"], "ack")
+        self.assertTrue(self.oled.clear.called)
 
     async def test_disconnect_restores_status_text(self):
         async with client_websockets.connect(f"ws://127.0.0.1:{self.port}") as websocket:

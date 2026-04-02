@@ -259,12 +259,12 @@ export default function App() {
       <header className="hero">
         <div>
           <p className="eyebrow">clear-oled / live captions</p>
-          <h1>Transcribe the Mac mic and mirror it to the OLED.</h1>
+          <h1>Mirror live words from the Mac mic to the OLED.</h1>
         </div>
         <div className={`status-card tone-${statusTone(status)}`}>
           <span className="status-label">Service</span>
           <strong>{status.service_state}</strong>
-          <span>{status.engine_backend || "Whisper backend idle"}</span>
+          <span>{status.engine_backend || "Speech backend idle"}</span>
         </div>
       </header>
 
@@ -307,9 +307,7 @@ export default function App() {
             </button>
           </div>
 
-          {status.mic_state === "permission_denied" && (
-            <div className="alert danger">{status.last_error}</div>
-          )}
+          {status.last_error && <div className="alert danger">{status.last_error}</div>}
           {actionError && <div className="alert danger">{actionError}</div>}
 
           <div className="status-grid">
@@ -322,7 +320,7 @@ export default function App() {
               <strong>{status.display_state}</strong>
             </div>
             <div>
-              <span className="label">Model</span>
+              <span className="label">Backend</span>
               <strong>{status.engine_model || "Not started"}</strong>
             </div>
             <div>
@@ -332,6 +330,11 @@ export default function App() {
           </div>
 
           {status.last_display_error && <div className="alert warn">{status.last_display_error}</div>}
+          {status.mic_state === "permission_denied" && (
+            <div className="alert warn">
+              Grant microphone and speech recognition access in macOS System Settings, then restart the session.
+            </div>
+          )}
         </article>
 
         <article className="panel transcript-panel">

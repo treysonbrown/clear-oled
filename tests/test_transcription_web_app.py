@@ -44,8 +44,8 @@ class FakeService:
             "current_partial": "",
             "current_oled_text": "",
             "current_session": None,
-            "engine_backend": None,
-            "engine_model": None,
+            "engine_backend": "macos-speech",
+            "engine_model": "macos-speech",
         }
 
     def list_audio_devices(self):

@@ -1,2 +1,4 @@
 __pycache__
 frontend/transcription-console/node_modules
+.venv-transcription/
+data/*.db

@@ -37,7 +37,7 @@ DISPLAY_STATE_CONNECTED = "connected"
 DISPLAY_STATE_DISCONNECTED = "disconnected"
 
 DEFAULT_LANGUAGE = "en"
-DEFAULT_MODEL = "mlx-community/whisper-tiny.en"
+DEFAULT_MODEL = "macos-speech"
 UTC_DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 MAX_SEGMENT_TEXT_LENGTH = 400
 
