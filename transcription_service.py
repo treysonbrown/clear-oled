@@ -45,7 +45,7 @@ class TranscriptionService:
         broadcaster=None,
         speech_session_factory=None,
         display_client_factory=None,
-        clear_after_silence_seconds=5.0,
+        clear_after_silence_seconds=2.0,
         debug=False,
     ):
         self.store = store
@@ -78,6 +78,7 @@ class TranscriptionService:
         self.display_client = None
         self.last_final_text = ""
         self.clear_task = None
+        self.pending_reset_prefix = ""
 
     async def startup(self):
         self.store.mark_interrupted_sessions()
@@ -139,6 +140,7 @@ class TranscriptionService:
             self.current_partial = ""
             self.current_oled_text = ""
             self.last_final_text = ""
+            self.pending_reset_prefix = ""
             self.display_state = DISPLAY_STATE_UNKNOWN
             self.display_connected = None
             self._cancel_clear_task()
@@ -260,12 +262,16 @@ class TranscriptionService:
     async def _clear_display(self):
         if self.display_client is None:
             return
+        cleared_text = self.current_partial or self.last_final_text or self.current_oled_text
         try:
             await self.display_client.clear()
             self.display_state = DISPLAY_STATE_CONNECTED
             self.display_connected = True
             self.last_display_error = None
+            self.pending_reset_prefix = normalize_transcript_text(cleared_text)
+            self.current_partial = ""
             self.current_oled_text = ""
+            self.last_final_text = ""
             if self.active_session is not None:
                 self.active_session = self.store.update_session(
                     self.active_session.id,
@@ -306,8 +312,26 @@ class TranscriptionService:
             if asyncio.current_task() is self.clear_task:
                 self.clear_task = None
 
-    async def _handle_partial(self, session_id, text, *, event_time=None):
+    def _normalize_live_text(self, text):
         normalized = normalize_transcript_text(text)
+        if not normalized:
+            return ""
+
+        prefix = self.pending_reset_prefix
+        if prefix:
+            if normalized == prefix:
+                return ""
+            if normalized.startswith(prefix):
+                trimmed = normalize_transcript_text(normalized[len(prefix) :].lstrip(" ,.;:!?-"))
+                if not trimmed:
+                    return ""
+                normalized = trimmed
+            self.pending_reset_prefix = ""
+
+        return normalized
+
+    async def _handle_partial(self, session_id, text, *, event_time=None):
+        normalized = self._normalize_live_text(text)
         if not normalized or normalized == self.current_partial:
             return
         oled_text = fit_transcript_tail_text(normalized)
@@ -328,7 +352,7 @@ class TranscriptionService:
         await self.publish_status()
 
     async def _handle_final(self, session_id, text, *, event_time=None):
-        normalized = normalize_transcript_text(text)
+        normalized = self._normalize_live_text(text)
         self.current_partial = ""
         if not normalized or normalized == self.last_final_text:
             await self.publish_status()

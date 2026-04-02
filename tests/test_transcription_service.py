@@ -29,7 +29,12 @@ class FakeSpeechSession:
 
     async def read_event(self):
         if self.events:
-            return self.events.pop(0)
+            event = self.events.pop(0)
+            if isinstance(event, tuple):
+                delay, payload = event
+                await asyncio.sleep(delay)
+                return payload
+            return event
         while not self.stopped:
             await asyncio.sleep(0.01)
         return None
@@ -69,6 +74,14 @@ class TranscriptionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.tempdir.cleanup)
         self.db_path = Path(self.tempdir.name) / "transcription.db"
         self.store = TranscriptionStore(self.db_path)
+        self.services = []
+
+    async def asyncTearDown(self):
+        for service in self.services:
+            try:
+                await service.stop_session()
+            except Exception:
+                pass
 
     async def collect_events(self, queue):
         messages = []
@@ -92,6 +105,7 @@ class TranscriptionServiceTests(unittest.IsolatedAsyncioTestCase):
             speech_session_factory=lambda: helper,
             display_client_factory=lambda: display_client,
         )
+        self.services.append(service)
         queue = await service.broadcaster.subscribe()
 
         await service.start_session()
@@ -121,6 +135,7 @@ class TranscriptionServiceTests(unittest.IsolatedAsyncioTestCase):
             speech_session_factory=lambda: helper,
             display_client_factory=lambda: display_client,
         )
+        self.services.append(service)
 
         await service.start_session()
         await asyncio.sleep(0.05)
@@ -143,6 +158,7 @@ class TranscriptionServiceTests(unittest.IsolatedAsyncioTestCase):
             speech_session_factory=lambda: helper,
             display_client_factory=lambda: FakeDisplayClient(),
         )
+        self.services.append(service)
 
         await service.start_session()
         await asyncio.sleep(0.05)
@@ -162,6 +178,7 @@ class TranscriptionServiceTests(unittest.IsolatedAsyncioTestCase):
             ),
             display_client_factory=lambda: FakeDisplayClient(),
         )
+        self.services.append(service)
 
         with self.assertRaises(MacOSSpeechPermissionError):
             await service.start_session()
@@ -182,6 +199,7 @@ class TranscriptionServiceTests(unittest.IsolatedAsyncioTestCase):
             display_client_factory=lambda: display_client,
             clear_after_silence_seconds=0.01,
         )
+        self.services.append(service)
 
         await service.start_session()
         await asyncio.sleep(0.05)
@@ -190,8 +208,33 @@ class TranscriptionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(display_client.sent, ["hello world"])
         self.assertEqual(display_client.clear_calls, 1)
         self.assertEqual(snapshot["current_oled_text"], "")
+        self.assertEqual(snapshot["current_partial"], "")
 
         await service.stop_session()
+
+    async def test_new_partial_strips_recently_cleared_prefix(self):
+        display_client = FakeDisplayClient()
+        helper = FakeSpeechSession(
+            events=[
+                {"type": "partial", "text": "hello world"},
+                (0.05, {"type": "partial", "text": "hello world again"}),
+            ]
+        )
+        service = TranscriptionService(
+            store=self.store,
+            display_url="ws://127.0.0.1:8766",
+            token="secret",
+            speech_session_factory=lambda: helper,
+            display_client_factory=lambda: display_client,
+            clear_after_silence_seconds=0.01,
+        )
+        self.services.append(service)
+
+        await service.start_session()
+        await asyncio.sleep(0.12)
+
+        self.assertEqual(display_client.sent, ["hello world", "again"])
+        self.assertGreaterEqual(display_client.clear_calls, 1)
 
 
 if __name__ == "__main__":
