@@ -262,6 +262,47 @@ This runtime captures frames from the MacBook webcam, center-crops them, runs OC
 
 If the MacBook sender stops or disconnects, the Pi OLED returns to `SERVER DOWN`.
 
+### 5.7 Live mic transcription console
+
+Use this path when you want the Mac microphone transcribed live and mirrored to the Pi OLED with a local web UI and local transcript storage.
+
+On the Raspberry Pi, keep running the existing display receiver:
+
+```bash
+cd /path/to/clear-oled
+python3 -m pip install -r requirements-pi.txt
+python3 display_server_ws.py --token change-me --debug
+```
+
+On the Mac, use Python 3.12 for the transcription app instead of the system Python 3.14:
+
+```bash
+python3.12 -m venv .venv-transcription
+source .venv-transcription/bin/activate
+python -m pip install -r requirements-transcription-web.txt
+```
+
+Then install and build the React frontend:
+
+```bash
+cd frontend/transcription-console
+npm install
+npm run build
+cd ../..
+```
+
+Start the FastAPI transcription app on the Mac:
+
+```bash
+python transcription_web_app.py \
+  --display-url ws://YOUR-PI-HOSTNAME.local:8766 \
+  --token change-me
+```
+
+Open `http://127.0.0.1:8090/` on the Mac. The web app can start and stop microphone capture, stream live partials, preview the current OLED text, and browse saved transcript sessions from `./data/transcription.db`.
+
+The mic pipeline uses the Mac microphone, local Whisper transcription, the existing display WebSocket protocol, and local SQLite persistence. If the Pi display server goes down, transcription continues and finalized segments are still stored locally.
+
 ## 6. Local Pi-only mode
 
 If you want everything to run directly on the Pi, install the heavier dependencies there instead.

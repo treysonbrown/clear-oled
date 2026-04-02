@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+websockets
+sounddevice
+numpy
+webrtcvad-wheels
+mlx-whisper
+faster-whisper

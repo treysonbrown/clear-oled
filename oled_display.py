@@ -119,7 +119,15 @@ def truncate_to_width(draw, font, text, max_width):
     return candidate + ellipsis
 
 
-def wrap_text(text, width=WIDTH, height=HEIGHT, padding=DEFAULT_PADDING, line_spacing=DEFAULT_LINE_SPACING):
+def _wrap_text_internal(
+    text,
+    *,
+    width=WIDTH,
+    height=HEIGHT,
+    padding=DEFAULT_PADDING,
+    line_spacing=DEFAULT_LINE_SPACING,
+    truncate_last_line=True,
+):
     ensure_pillow()
     image = Image.new("1", (width, height), "WHITE")
     draw = ImageDraw.Draw(image)
@@ -129,6 +137,7 @@ def wrap_text(text, width=WIDTH, height=HEIGHT, padding=DEFAULT_PADDING, line_sp
     line_height = max(1, measure_text(draw, font, "Ag")[1])
     max_lines = max(1, (height - (padding * 2) + line_spacing) // (line_height + line_spacing))
     wrapped_lines = []
+    overflowed = False
 
     for paragraph_tokens in normalize_wrap_tokens(text):
         current = ""
@@ -151,9 +160,11 @@ def wrap_text(text, width=WIDTH, height=HEIGHT, padding=DEFAULT_PADDING, line_sp
                 current = candidate
 
             if len(wrapped_lines) >= max_lines:
+                overflowed = True
                 break
 
         if len(wrapped_lines) >= max_lines:
+            overflowed = True
             break
 
         wrapped_lines.append(current)
@@ -166,11 +177,56 @@ def wrap_text(text, width=WIDTH, height=HEIGHT, padding=DEFAULT_PADDING, line_sp
 
     if len(wrapped_lines) > max_lines:
         wrapped_lines = wrapped_lines[:max_lines]
+        overflowed = True
 
-    if len(wrapped_lines) == max_lines:
+    if truncate_last_line and len(wrapped_lines) == max_lines:
         wrapped_lines[-1] = truncate_to_width(draw, font, wrapped_lines[-1], available_width)
 
-    return wrapped_lines[:max_lines]
+    return wrapped_lines[:max_lines], overflowed
+
+
+def wrap_text(text, width=WIDTH, height=HEIGHT, padding=DEFAULT_PADDING, line_spacing=DEFAULT_LINE_SPACING):
+    lines, _ = _wrap_text_internal(
+        text,
+        width=width,
+        height=height,
+        padding=padding,
+        line_spacing=line_spacing,
+        truncate_last_line=True,
+    )
+    return lines
+
+
+def fit_transcript_tail_text(
+    text,
+    width=WIDTH,
+    height=HEIGHT,
+    padding=DEFAULT_PADDING,
+    line_spacing=DEFAULT_LINE_SPACING,
+):
+    normalized = " ".join((text or "").split())
+    if not normalized:
+        return ""
+
+    if Image is None or ImageDraw is None or ImageFont is None:
+        words = normalized.split(" ")
+        return " ".join(words[-6:])
+
+    words = normalized.split(" ")
+    for index in range(len(words)):
+        candidate = " ".join(words[index:])
+        lines, overflowed = _wrap_text_internal(
+            candidate,
+            width=width,
+            height=height,
+            padding=padding,
+            line_spacing=line_spacing,
+            truncate_last_line=False,
+        )
+        if not overflowed and " ".join(lines).strip():
+            return candidate
+
+    return words[-1]
 
 
 def render_text_image(
