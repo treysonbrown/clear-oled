@@ -78,7 +78,7 @@ class TranscriptionService:
         self.display_client = None
         self.last_final_text = ""
         self.clear_task = None
-        self.pending_reset_prefix = ""
+        self.post_clear_baseline_text = ""
 
     async def startup(self):
         self.store.mark_interrupted_sessions()
@@ -140,7 +140,7 @@ class TranscriptionService:
             self.current_partial = ""
             self.current_oled_text = ""
             self.last_final_text = ""
-            self.pending_reset_prefix = ""
+            self.post_clear_baseline_text = ""
             self.display_state = DISPLAY_STATE_UNKNOWN
             self.display_connected = None
             self._cancel_clear_task()
@@ -259,6 +259,12 @@ class TranscriptionService:
                 )
             await self.publish_status()
 
+    async def _update_oled_text(self, text):
+        normalized = normalize_transcript_text(text)
+        if not normalized or normalized == self.current_oled_text:
+            return
+        await self._send_display_text(normalized)
+
     async def _clear_display(self):
         if self.display_client is None:
             return
@@ -268,7 +274,7 @@ class TranscriptionService:
             self.display_state = DISPLAY_STATE_CONNECTED
             self.display_connected = True
             self.last_display_error = None
-            self.pending_reset_prefix = normalize_transcript_text(cleared_text)
+            self.post_clear_baseline_text = normalize_transcript_text(cleared_text)
             self.current_partial = ""
             self.current_oled_text = ""
             self.last_final_text = ""
@@ -313,31 +319,55 @@ class TranscriptionService:
                 self.clear_task = None
 
     def _normalize_live_text(self, text):
-        normalized = normalize_transcript_text(text)
+        return normalize_transcript_text(text)
+
+    @staticmethod
+    def _find_overlap_prefix_length(baseline_tokens, incoming_tokens):
+        if not baseline_tokens or not incoming_tokens:
+            return 0
+
+        max_prefix = min(len(baseline_tokens), len(incoming_tokens))
+        for prefix_length in range(max_prefix, 0, -1):
+            prefix = incoming_tokens[:prefix_length]
+            last_start = len(baseline_tokens) - prefix_length
+            for start in range(last_start + 1):
+                if baseline_tokens[start : start + prefix_length] == prefix:
+                    return prefix_length
+        return 0
+
+    def _trim_post_clear_oled_text(self, raw_text, *, is_final=False):
+        normalized = normalize_transcript_text(raw_text)
         if not normalized:
             return ""
 
-        prefix = self.pending_reset_prefix
-        if prefix:
-            if normalized == prefix:
-                return ""
-            if normalized.startswith(prefix):
-                trimmed = normalize_transcript_text(normalized[len(prefix) :].lstrip(" ,.;:!?-"))
-                if not trimmed:
-                    return ""
-                normalized = trimmed
-            self.pending_reset_prefix = ""
+        baseline = self.post_clear_baseline_text
+        if not baseline:
+            return normalized
 
-        return normalized
+        baseline_tokens = baseline.split()
+        incoming_tokens = normalized.split()
+        overlap_prefix_length = self._find_overlap_prefix_length(baseline_tokens, incoming_tokens)
+        if overlap_prefix_length == 0:
+            self.post_clear_baseline_text = ""
+            return normalized
+
+        trimmed = " ".join(incoming_tokens[overlap_prefix_length:])
+        if is_final and trimmed:
+            self.post_clear_baseline_text = ""
+        return trimmed
 
     async def _handle_partial(self, session_id, text, *, event_time=None):
         normalized = self._normalize_live_text(text)
-        if not normalized or normalized == self.current_partial:
+        if not normalized:
             return
-        oled_text = fit_transcript_tail_text(normalized)
+
+        oled_source_text = self._trim_post_clear_oled_text(normalized)
+        oled_text = fit_transcript_tail_text(oled_source_text)
+        if normalized == self.current_partial and oled_text == self.current_oled_text:
+            return
         self.current_partial = normalized
-        await self._send_display_text(oled_text)
         self._schedule_clear_after_silence()
+        await self._update_oled_text(oled_text)
         timestamp = event_time or now_utc()
         await self.broadcaster.publish(
             "partial",
@@ -354,12 +384,17 @@ class TranscriptionService:
     async def _handle_final(self, session_id, text, *, event_time=None):
         normalized = self._normalize_live_text(text)
         self.current_partial = ""
-        if not normalized or normalized == self.last_final_text:
+        if not normalized:
+            await self.publish_status()
+            return
+
+        oled_source_text = self._trim_post_clear_oled_text(normalized, is_final=True)
+        oled_text = fit_transcript_tail_text(oled_source_text)
+        if normalized == self.last_final_text and oled_text == self.current_oled_text:
             await self.publish_status()
             return
 
         self.last_final_text = normalized
-        oled_text = fit_transcript_tail_text(normalized)
         timestamp = event_time or now_utc()
         try:
             segment = self.store.create_segment(
@@ -375,8 +410,8 @@ class TranscriptionService:
             await self.publish_status()
             segment = None
 
-        await self._send_display_text(oled_text)
         self._schedule_clear_after_silence()
+        await self._update_oled_text(oled_text)
         if segment is not None:
             await self.broadcaster.publish("final_segment", segment.to_api_dict())
         await self.publish_status()
@@ -442,6 +477,9 @@ class TranscriptionService:
                 self.service_state = SERVICE_STATE_IDLE
                 self.mic_state = MIC_STATE_IDLE if not session_error else self.mic_state
                 self.current_partial = ""
+                self.current_oled_text = ""
+                self.last_final_text = ""
+                self.post_clear_baseline_text = ""
                 self.session_task = None
                 self.stop_event = None
                 self.display_client = None

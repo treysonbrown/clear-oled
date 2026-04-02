@@ -236,6 +236,136 @@ class TranscriptionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(display_client.sent, ["hello world", "again"])
         self.assertGreaterEqual(display_client.clear_calls, 1)
 
+    async def test_carryover_only_partials_stay_blank_after_timeout(self):
+        display_client = FakeDisplayClient()
+        helper = FakeSpeechSession(
+            events=[
+                {"type": "partial", "text": "hello world"},
+                (0.05, {"type": "partial", "text": "hello"}),
+                (0.01, {"type": "partial", "text": "hello world"}),
+            ]
+        )
+        service = TranscriptionService(
+            store=self.store,
+            display_url="ws://127.0.0.1:8766",
+            token="secret",
+            speech_session_factory=lambda: helper,
+            display_client_factory=lambda: display_client,
+            clear_after_silence_seconds=0.02,
+        )
+        self.services.append(service)
+
+        await service.start_session()
+        await asyncio.sleep(0.14)
+
+        self.assertEqual(display_client.sent, ["hello world"])
+        self.assertGreaterEqual(display_client.clear_calls, 1)
+        self.assertEqual(service.status_snapshot()["current_oled_text"], "")
+
+    async def test_cumulative_partials_keep_old_words_suppressed_after_timeout(self):
+        display_client = FakeDisplayClient()
+        helper = FakeSpeechSession(
+            events=[
+                {"type": "partial", "text": "hello world"},
+                (0.05, {"type": "partial", "text": "hello world again"}),
+                (0.01, {"type": "partial", "text": "hello world again there"}),
+            ]
+        )
+        service = TranscriptionService(
+            store=self.store,
+            display_url="ws://127.0.0.1:8766",
+            token="secret",
+            speech_session_factory=lambda: helper,
+            display_client_factory=lambda: display_client,
+            clear_after_silence_seconds=0.02,
+        )
+        self.services.append(service)
+
+        await service.start_session()
+        await asyncio.sleep(0.14)
+
+        self.assertEqual(display_client.sent, ["hello world", "again", "again there"])
+
+    async def test_final_segment_keeps_raw_text_and_trims_oled_text_after_timeout(self):
+        display_client = FakeDisplayClient()
+        helper = FakeSpeechSession(
+            events=[
+                {"type": "partial", "text": "hello world"},
+                (0.05, {"type": "final", "text": "hello world again"}),
+            ]
+        )
+        service = TranscriptionService(
+            store=self.store,
+            display_url="ws://127.0.0.1:8766",
+            token="secret",
+            speech_session_factory=lambda: helper,
+            display_client_factory=lambda: display_client,
+            clear_after_silence_seconds=0.02,
+        )
+        self.services.append(service)
+
+        await service.start_session()
+        await asyncio.sleep(0.12)
+        await service.stop_session()
+
+        session = self.store.list_sessions(limit=1)[0]
+        detail = self.store.get_session_with_segments(session.id)
+
+        self.assertEqual(display_client.sent, ["hello world", "again"])
+        self.assertEqual(len(detail["segments"]), 1)
+        self.assertEqual(detail["segments"][0].text, "hello world again")
+        self.assertEqual(detail["segments"][0].oled_text, "again")
+
+    async def test_non_overlapping_partial_clears_post_timeout_suppression(self):
+        display_client = FakeDisplayClient()
+        helper = FakeSpeechSession(
+            events=[
+                {"type": "partial", "text": "hello world"},
+                (0.05, {"type": "partial", "text": "good morning"}),
+                (0.01, {"type": "partial", "text": "good morning everyone"}),
+            ]
+        )
+        service = TranscriptionService(
+            store=self.store,
+            display_url="ws://127.0.0.1:8766",
+            token="secret",
+            speech_session_factory=lambda: helper,
+            display_client_factory=lambda: display_client,
+            clear_after_silence_seconds=0.02,
+        )
+        self.services.append(service)
+
+        await service.start_session()
+        await asyncio.sleep(0.14)
+
+        self.assertEqual(display_client.sent, ["hello world", "good morning", "good morning everyone"])
+
+    async def test_carryover_only_speech_resets_silence_timer(self):
+        display_client = FakeDisplayClient()
+        helper = FakeSpeechSession(
+            events=[
+                {"type": "partial", "text": "hello world"},
+                (0.05, {"type": "partial", "text": "hello"}),
+                (0.015, {"type": "partial", "text": "hello world"}),
+                (0.015, {"type": "partial", "text": "hello world again"}),
+            ]
+        )
+        service = TranscriptionService(
+            store=self.store,
+            display_url="ws://127.0.0.1:8766",
+            token="secret",
+            speech_session_factory=lambda: helper,
+            display_client_factory=lambda: display_client,
+            clear_after_silence_seconds=0.03,
+        )
+        self.services.append(service)
+
+        await service.start_session()
+        await asyncio.sleep(0.095)
+
+        self.assertEqual(display_client.sent, ["hello world", "again"])
+        self.assertEqual(display_client.clear_calls, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
