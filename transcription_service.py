@@ -45,7 +45,7 @@ class TranscriptionService:
         broadcaster=None,
         speech_session_factory=None,
         display_client_factory=None,
-        clear_after_silence_seconds=2.0,
+        clear_after_silence_seconds=1.0,
         debug=False,
     ):
         self.store = store
